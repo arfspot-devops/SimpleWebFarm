@@ -1,0 +1,209 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Calibri;}{\f1\fnil\fcharset255 System;}{\f2\fnil\fcharset2 Symbol;}}
+{\colortbl ;\red0\green0\blue255;}
+{\*\generator Riched20 10.0.16299}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\b\f0\fs22\lang9 Introduction\b0\par
+This task is to demonstrate understanding of AWS principles and applications.\par
+This document provides instructions to set up a webserver farm behind an AWS elastic load balancer (ELB).  The webservers will be spread over 3 availability zones.  The webservers will provide the following information to validate the functionality of the ELB.  In particular, it will display:\par
+
+\pard{\pntext\f2\'B7\tab}{\*\pn\pnlvlblt\pnf2\pnindent0{\pntxtb\'B7}}\fi-360\li720\sa200\sl276\slmult1 Instance ID\par
+{\pntext\f2\'B7\tab}Instance Type\par
+{\pntext\f2\'B7\tab}Private IP address of the instance\par
+{\pntext\f2\'B7\tab}Availability Zone of the instance\par
+{\pntext\f2\'B7\tab}AMI ID used to launch the server\par
+
+\pard\sa200\sl276\slmult1 This small application provides a short demonstration of loadbalancing as well as a few features of AWS that provide infrastructure flexibility, resilliance and fault tollerance.\par
+\b Assumptions\par
+\b0 This document assumes the existence of a valid AWS account with EC2 and VPC console access.\par
+For the purposes of this demonstration, the server farm will reside in US-WEST2 (Oregon)\par
+\b Limitations\b0\par
+This document specifically uses Amazon's Free Tier and inherits all limitations provided by the free service level.  The AMI and Server types can be updated to non-free if desired.\par
+\b Audience\par
+\b0 This document is intended for novice users with some familiarity with the AWS console interface.\b\par
+\par
+Overview of the process\par
+
+\pard\li720\sa200\sl276\slmult1 1. VPC preparation\par
+2. Create Security Groups\par
+3. Elastic Load Balancer definition\par
+4. Launch Configuration and Auto Scaling configuration\par
+
+\pard\sa200\sl276\slmult1\par
+VPC Preparation\par
+\b0 This task will prepare the Virtual Private Cloud (VPC) environment to use 3 different Availability Zones.  The different availability zones will ensure that servers are geographically separated and reduce the impact of site failures.\par
+The following steps willl create a new VPC which will house all our compute resources.\par
+\par
+
+\pard 
+{\pntext\f0 1.\tab}{\*\pn\pnlvlbody\pnf0\pnindent0\pnstart1\pndec{\pntxta.}}
+\fi-360\li720\sa200\sl276\slmult1 Log into the AWS console\par
+{\pntext\f0 2.\tab}On the right side of the Top Bar, select \b US-West2 (Oregon)\b0\par
+{\pntext\f0 3.\tab}From the AWS Top Bar, Select \b Services > VPC \par
+{\pntext\f0 4.\tab}\b0 From the VPC Dashboard left navigation bar, Select \b Your VPCs  \par
+{\pntext\f0 5.\tab}\b0 Click on the \b Create VPC\b0  button\par
+{\pntext\f0 6.\tab}Use the following values to create the new VPC:\line\tab NameTag: VPCWebDemo\line\tab IPv4 CIDR block: 10.200.0.0/16\line\tab No IPv6 CIDR Block\line\tab Tenancy: default \par
+{\pntext\f0 7.\tab}From the VPC Dashboard left navigation bar, Select \b Subnets\b0\par
+{\pntext\f0 8.\tab}Create the first subnet by clicking the \b Create Subnet \b0 button\par
+{\pntext\f0 9.\tab}Use the following values to create the new Subnet\line\tab NameTag: subWebDemo-usw2a\line\tab VPC: VPCWebDemo\line\tab Availability Zone: us-west-2a\line\tab IPv4 CIDR block: 10.200.0.0/20\par
+{\pntext\f0 10.\tab}Create the second subnet with the following values:\line\tab NameTag: subWebDemo-usw2b\line\tab VPC: VPCWebDemo\line\tab Availability Zone: us-west-2b\line\tab IPv4 CIDR block: 10.200.16.0/20\par
+{\pntext\f0 11.\tab}Create the third subnet with the following values:\line\tab NameTag: subWebDemo-usw2c\line\tab VPC: VPCWebDemo\line\tab Availability Zone: us-west-2c\line\tab IPv4 CIDR block: 10.200.32.0/20\par
+{\pntext\f0 12.\tab}From the VPC Dashboard left navigation bar, Select \b Internet Gateways\b0\par
+{\pntext\f0 13.\tab}Create an internet gateway by clicking the \b Create internet gateway \b0 button\line The internet gateway (IGW) connects your private cloud to the public internet.  The IGW needs to be assocated with each VPC that needs to access outside of the VPC. \par
+{\pntext\f0 14.\tab}Use the following values for the internet gateway\line\tab Name tag: IGWWebDemo\par
+{\pntext\f0 15.\tab}On the gateway table, right click on the \b IGWWebDemo\b0  entry and select \b Attach to VPC \b0 on the dropdown\par
+{\pntext\f0 16.\tab}Use the following value for the association:\line\tab VPC: VPCWebDemo\par
+{\pntext\f0 17.\tab}From the VPC Dashboard left navigation bar, Select \b Route Tables\b0\par
+{\pntext\f0 18.\tab}Select the routing table associated with \b VPCWebDemo\b0\par
+{\pntext\f0 19.\tab}On the \b Routes \b0 tab below, click on the \b Edit \b0 button\par
+{\pntext\f0 20.\tab}Click on \b Add another route\par
+{\pntext\f0 21.\tab}\b0 Use the following values for the new route:\line\tab Destination: 0.0.0.0/0\line\tab Target: IGWWebDemo\par
+{\pntext\f0 22.\tab}Click \b Save \b0 to ensure the new route persists\par
+
+\pard\sa200\sl276\slmult1\par
+This complete the VPC preparation phase. \par
+\b Create Security Groups\par
+\b0 AWS can apply several layers of filters to secure the VPC.  Network ACLs are rough perimiter walls that keep unwanted connectivity.  Security Groups allow more granular control based on the type of traffic, the port as well as the flow of the packets. \par
+This section creates 2 security groups.  The first one will filter traffic going to the Elastic Load Balancer.  The second will filter traffic going to the Host Target Group.\par
+
+\pard 
+{\pntext\f0 1.\tab}{\*\pn\pnlvlbody\pnf0\pnindent0\pnstart1\pndec{\pntxta.}}
+\fi-360\li720\sa200\sl276\slmult1 From the AWS Top Bar, Select \b Services -> EC2\b0\par
+{\pntext\f0 2.\tab}From the EC2 Dashboard left navigation bar, Select \b Security Groups \b0 (under the \ul NETWORK and SECURITY\ulnone  submenu)\par
+{\pntext\f0 3.\tab}Click \b Create Security Group\b0\par
+{\pntext\f0 4.\tab}Use the following information:\line\tab Security group name: SGALBWebDemo\line\tab Description: Security Group for the ALB Web Demo \line\tab VPC: VPCWebDemo\par
+{\pntext\f0 5.\tab}Select the \b Inbound\b0  Tab \par
+{\pntext\f0 6.\tab}For the Security table tuple (Type, Protocol, Port Range, Source, Description), use the following values:\line\tab HTTP : TCP : 80 : Anywhere : 0.0.0.0/0 : Internet traffic\b\par
+{\pntext\f0 7.\tab}\b0 Click \b Create\b0\par
+{\pntext\f0 8.\tab}On the Security Group page, select on \b SGALBWebDemo\b0\par
+{\pntext\f0 9.\tab}Under the description tab, copy the \b Group ID\b0  on the clipboard (hint: mouseover the Group ID, and a copy to clipboard icon will appear)\par
+{\pntext\f0 10.\tab}Click \b Create Security Group\b0\par
+{\pntext\f0 11.\tab}Use the following information to define the security group:\line\tab Security group name: SGTGTHostWebDemo\line\tab Description: Security Group for the ALB Web Demo Target Hosts \line\tab VPC: VPCWebDemo\par
+{\pntext\f0 12.\tab}Select the \b Inbound\b0  Tab\tab\par
+{\pntext\f0 13.\tab}For the Security table tuple (Type, Protocol, Port Range, Source, Description), use the following values:\line\tab HTTP : TCP : 80 : Custom IP : <SGALBWebDemo Group ID>: ALBWebDemo \line\tab SSH : TCP : 22 : My IP : x.x.x.x/32 : SSH Port for troubleshooting\par
+{\pntext\f0 14.\tab}Click \b Create\par
+{\pntext\f0 15.\tab}\b0 Validate that there 2 new security groups are on the list\b\par
+
+\pard\sa200\sl276\slmult1\par
+Elastic Load Balancer definition\par
+\b0 The Elastic Load Balancer (ELB) is the front facing component for the project.  As requests are recieved, the ELB forwards them to the next available web server.  This project will use the Application Load Balancer (ALB).\par
+
+\pard 
+{\pntext\f0 1.\tab}{\*\pn\pnlvlbody\pnf0\pnindent0\pnstart1\pndec{\pntxta.}}
+\fi-360\li720\sa200\sl276\slmult1 From the AWS Top Bar, Select \b Services -> EC2\b0\par
+{\pntext\f0 2.\tab}From the EC2 Dashboard left navigation bar, Select \b Load Balancers \b0 (under the \ul LOAD BALANCING\ulnone  submenu)\par
+{\pntext\f0 3.\tab}Click the \b Create Load Balancer \b0 button\par
+{\pntext\f0 4.\tab}Select the \b Application Load Balancer \b0 (leftmost)\par
+{\pntext\f0 5.\tab}Use the following information to populate the Basic Configuration\line\tab Name: ALBWebDemo\line\tab Scheme: internet-facing\line\tab IP address type: ipv4\par
+{\pntext\f0 6.\tab}Use the following information to populate the Listerners Configuration\line\tab Load Balancer Protocol: HTTP\line\tab Load Balaner Port: 80\par
+{\pntext\f0 7.\tab}Use the following information to populate the Availability Zones Configuration\line\tab VPC: VPCWebDemo\line\tab Select \ul\b all\ulnone\b0  the Availability Zones\par
+{\pntext\f0 8.\tab}Add the following information for the Tag (Key/Value pair)\line\tab Group: WebDemo\par
+{\pntext\f0 9.\tab}Click on the \b Configure Security Groups\b0\line The use of HTTP will trigger a security warning.  The warning can be ignored for this application.\par
+{\pntext\f0 10.\tab}Click on \b the Select an existing security group\b0  radio button\par
+{\pntext\f0 11.\tab}Select the \b SGALBWebDemo\b0  entry\par
+{\pntext\f0 12.\tab}Click on the \b Next\b0  button to continue onto Routing configuration\par
+{\pntext\f0 13.\tab}Use the following information:\line\tab Target group: New target group\line\tab Name: ALBTGTWebDemo\line\tab Protocol: HTTP\line\tab Port: 80\line\tab Target type: instance\line Note that the default heath checks are adequate for this application.  Additonal health checks can be added later if required.\par
+{\pntext\f0 14.\tab}Click \b Next: Register Targets\b0\line Note that targets have not been created for this ALB at this time.  Targets will be dynamically created by the AutoScale feature in the next section.\par
+{\pntext\f0 15.\tab}Click \b Next: Review\b0\line Validate the information\par
+{\pntext\f0 16.\tab}Click \b Create\b0\par
+{\pntext\f0 17.\tab}From the EC2 Dashboard left navigation bar, Select \b Load Balancers \b0 (under the \ul LOAD BALANCING\ulnone  submenu)\par
+{\pntext\f0 18.\tab}Validate that the newly created ALB is in the ALB table\par
+{\pntext\f0 19.\tab}From the EC2 Dashboard left navigation bar, Select \b Target Groups \b0 (under the \ul LOAD BALANCING\ulnone  submenu)\par
+{\pntext\f0 20.\tab}Validate that the newly created Target Group is in the Target Group table\par
+
+\pard\sa200\sl276\slmult1\par
+\b Launch Configuration and Auto Scaling configuration\par
+\b0 Launch configurations define the instances (virtual server) that will be launched for the application.  Each instance launched by the application can be customized via the start up script.  Instances that require more complicated setup can be saved as Amazon Machine Images (AMI) and launched fully configured.\par
+The Auto Scaling feature defines the rules associated with increasing the server instance count based on performance metrics.  The Auto Scaling feature ensures that the minimum number of instances to meet the demand are running (i.e. scaling up when needed, and scaling down when not).  This results in a cost effective and highly available solution.\par
+
+\pard 
+{\pntext\f0 1.\tab}{\*\pn\pnlvlbody\pnf0\pnindent0\pnstart1\pndec{\pntxta.}}
+\fi-360\li720\sa200\sl276\slmult1 From the AWS Top Bar, Select \b Services -> EC2\b0\par
+{\pntext\f0 2.\tab}From the EC2 Dashboard left navigation bar, Select \b Launch Configurations (\b0 under the \ul AUTO SCALING\ulnone  submenu)\par
+{\pntext\f0 3.\tab}If there are no other Lauch Configurations, Click on the \b Create Auto Scaling Group \b0 button, otherwise skip to the next step\par
+{\pntext\f0 4.\tab}Click the \b Create Lauch Configuration \b0 button\par
+{\pntext\f0 5.\tab}Select \b Amazon Linux AMI 2018.03.0 (ami-6b8cef13)\line\b0 Note that other AMIs can be used for this step, but may require some changes in configuration script, depending on the specific linux flavor\par
+{\pntext\f0 6.\tab}Select \b t2.micro (free tier eligible)\b0\line Note that other server types can be selected on this step, but may incur additional cost\par
+{\pntext\f0 7.\tab}Click \b Next: Configuration details\b0\par
+{\pntext\f0 8.\tab}Use the following information for the basic Launch Configuration details:\line\tab Name: LCWebDemo\line\tab Purchasing option: DO NOT request spot instances\line\tab IAM role: None\line\tab Monitoring: DO NOT enable CloudWatch detailed monitoring\line Note: more complex IAM roles can be defined if necessary\par
+{\pntext\f0 9.\tab}Click on \b Advance Details \b0 drop down\par
+{\pntext\f0 10.\tab}In the \b User Data text box \b0 enter the following information:\line\b\f1\fs18\lang1033 #!/bin/bash\line yum update -y\line yum install -y nginx\line chkconfig --level 3 nginx on\line function awsmeta \{ \line     echo "<h3> $1 </h3> <h4> `curl -s {{\field{\*\fldinst{HYPERLINK http://169.254.169.254/latest/meta-data/$2` }}{\fldrslt{http://169.254.169.254/latest/meta-data/$2`\ul0\cf0}}}}\f1\fs18  </h3><br>"\line\}\line\line\line function buildpage () \line\{ \line     echo "<div style="text-align:center">"\line     awsmeta Instance_ID instance-id\line     awsmeta Instance_Type instance-type\line     awsmeta Private_IP local-ipv4\line     awsmeta Availability_Zone placement/availability-zone\line     awsmeta AMI_ID ami-id\line\}\line\line buildpage > /usr/share/nginx/html/index.html\line /etc/init.d/nginx start\line\b0\f0\fs22\lang9\line\line This scipt will update/patch the host, install nginx and start webservices.  The index.html information will be updated with the host information required for this exercise.\line\par
+{\pntext\f0 11.\tab}Continue down to the \b IP Address Type: Assign a public IP address to every instance\b0\par
+{\pntext\f0 12.\tab}Click \b Next: Add Storage\b0\line Note that the configration is adequate\par
+{\pntext\f0 13.\tab}Click \b Next: Configure Security Group\b0\par
+{\pntext\f0 14.\tab}Under \b Assign a security group \b0 choose \b Select an existing security group \b0 radio button\par
+{\pntext\f0 15.\tab}Select \b SGTGTHostWebDemo\b0\par
+{\pntext\f0 16.\tab}Click \b Review \b0\par
+{\pntext\f0 17.\tab}Create \b Create launch configuration \b0 button\par
+{\pntext\f0 18.\tab}Click \b Close\b0\par
+{\pntext\f0 19.\tab}Create a new key pair when prompted \par
+{\pntext\f0 20.\tab}The key pair may be necessary to troubleshoot issues.   Download the pem key and keep it safe.\par
+{\pntext\f0 21.\tab}Steps 21-26 are necessary if there are existing Auto Scaling Groups  otherwise, the wizard will jump to step 27\par
+{\pntext\f0 22.\tab}From the EC2 Dashboard left navigation bar, Select \b Auto Scaling Groups\b0\par
+{\pntext\f0 23.\tab}Click on \b Create Auto Scaling group\b0\par
+{\pntext\f0 24.\tab}Select \b Create an Auto Scaling group from an existing launch configuration\b0\par
+{\pntext\f0 25.\tab}Select \b LCWebDemo\b0\par
+{\pntext\f0 26.\tab}Click \b Next Step\b0\par
+{\pntext\f0 27.\tab}Populate the information with the following information:\line\tab Launch Configuration: LCWebDemo\line\tab Group Name: ASGWebDemo\line\tab Group Size: 3\line\tab Network: VPCWebDemo\line\tab Subnet: \b Select all 3 subnets\b0\par
+{\pntext\f0 28.\tab}Click on \b Advance Details\b0\line\tab Select \b Receive traffic from one or more load balacers\b0\line\tab Add \b ALBTGTWebDemo\b0  as the Target Group\line\tab Under \b Health Check Type\b0 , select the \b ELB \b0 radio button\line\tab Under \b Health Check Grace Period\b0 , set to \b 900\b0  seconds \par
+{\pntext\f0 29.\tab}Click \b Next:Configure Scaling Policies \b0\line Note that the \b Keep this group at its initial size \b0 is set\line Scaling policies can be added later to adjust the number of instances based on webload.  \par
+{\pntext\f0 30.\tab}Click \b Next: Configure Notification\b0\line For this application, additional notifications are not necessary\par
+{\pntext\f0 31.\tab}Click \b Next: Configure Tags\b0\par
+{\pntext\f0 32.\tab}Add the following Key/Value pair for the tags\line\tab Group: WebDemo\line Ensure that the \b Tag New Instances \b0 box is checked\par
+{\pntext\f0 33.\tab}Click \b Review\line\b0 Verify the information\b\par
+{\pntext\f0 34.\tab}\b0 Click \b Create AutoScaling Group\b0\par
+{\pntext\f0 35.\tab}Click \b Close\b0\par
+{\pntext\f0 36.\tab}The Autoscaling Page should indicate the new instances ramping up.\par
+{\pntext\f0 37.\tab}\par
+
+\pard\sa200\sl276\slmult1\par
+\b Testing the Project\b0\par
+Target hosts will take about \b 8-10 minutes \b0 to spin up. Fortunately, execution occurs in parallel.  Once the instances are up and running, the server farm can be accessed through a web browser.\par
+
+\pard 
+{\pntext\f0 1.\tab}{\*\pn\pnlvlbody\pnf0\pnindent0\pnstart1\pndec{\pntxta.}}
+\fi-360\li720\sa200\sl276\slmult1 From the AWS Top Bar, Select \b Services -> EC2\b0\par
+{\pntext\f0 2.\tab}From the EC2 Dashboard left navigation bar, Select \b Load Balancers\b0\par
+{\pntext\f0 3.\tab}Select \b ALBWebDemo\b0\par
+{\pntext\f0 4.\tab}Under the Description tab, find and copy the \b DNS name\b0\par
+{\pntext\f0 5.\tab}Enter the DNS name into a browser\par
+{\pntext\f0 6.\tab}Refreshing the call will result in a different instance in each AZ in a round robin fashion.\par
+{\pntext\f0 7.\tab}Terminating an instance will trigger the auto scaling feature to create a new host.\line\par
+
+\pard\sa200\sl276\slmult1\par
+\b Troubleshooting\par
+Server IP address could not be found - \b0  Double check the ALB DNS name. \par
+\b  Bad Gateway - \b0 The ALB is unable to communicate with the application server\par
+
+\pard{\pntext\f2\'B7\tab}{\*\pn\pnlvlblt\pnf2\pnindent0{\pntxtb\'B7}}\fi-360\li720\sa200\sl276\slmult1 On the EC2 -> Target Groups, check the monitoring tab of ALBTGTWebDemo.  There should be at least one Healthy Host.\b\par
+{\pntext\f2\'B7\tab}\b0 If the hosts are unhealthy, ssh into the one of the instances and verify that nginx and the html page has been updated correctly.   (curl localhost)\b\par
+{\pntext\f2\'B7\tab}\b0 This error could also be caused by a missing route or incorrectly provisioned internet gateway.  Revisit the steps above to confirm\b\par
+{\pntext\f2\'B7\tab}\b0 Check that the security groups are properly configured.  Double check the protocols are HTTP not HTTPS, and the security groups use port 80\b\par
+
+\pard\sa200\sl276\slmult1 Service Temporarily Unavailable - \b0  This error occurs when there aren't any available instances. \par
+
+\pard{\pntext\f2\'B7\tab}{\*\pn\pnlvlblt\pnf2\pnindent0{\pntxtb\'B7}}\fi-360\li720\sa200\sl276\slmult1 Check the AutoScale Group configuration, ensure that there is at least 1 server allocated for provisioning\b\par
+{\pntext\f2\'B7\tab}\b0 Check the Target Group to ensure that there is at least 1 healthy server\b\par
+{\pntext\f2\'B7\tab}\b0 Instances might have just launched and are still patching -- please wait 10 minutes.\b\par
+
+\pard\sa200\sl276\slmult1 Unable to SSH to host - \b0 SSH times out when connecting to the instance\par
+
+\pard{\pntext\f2\'B7\tab}{\*\pn\pnlvlblt\pnf2\pnindent0{\pntxtb\'B7}}\fi-360\li720\sa200\sl276\slmult1 Ensure that the host has a public IP address\b\par
+{\pntext\f2\'B7\tab}\b0 Ensure that the default routes are applied to the internet gateway\b\par
+{\pntext\f2\'B7\tab}\b0 Double check security groups for SSH/Port 22 access\b .  \b0 Verify the IP address used by the local ssh client matches the IP address allowed. (hint: whatismyipaddress.com).\b\par
+
+\pard\sa200\sl276\slmult1 Unable to log into webserver instance - \b0 This is typically caused by an incorrect key pair.\par
+
+\pard{\pntext\f2\'B7\tab}{\*\pn\pnlvlblt\pnf2\pnindent0{\pntxtb\'B7}}\fi-360\li720\sa200\sl276\slmult1 Revisit the Lauch Configuration and generate a new Key Pair.\b\par
+
+\pard\sa200\sl276\slmult1 IP Address not changing when refreshing connection -- \b0  The application is not load balancing as expected\par
+
+\pard{\pntext\f2\'B7\tab}{\*\pn\pnlvlblt\pnf2\pnindent0{\pntxtb\'B7}}\fi-360\li720\sa200\sl276\slmult1 Ensure there is more than healthy 1 instance in the Target Group\b\par
+{\pntext\f2\'B7\tab}\b0 Ensure that the other Availability Zones are functioning correctly\b\par
+{\pntext\f2\'B7\tab}\b0 Ensure there aren't any rules that will adjust the behavior of the ALB\b\par
+
+\pard\sa200\sl276\slmult1\par
+\b0\par
+\par
+\par
+\par
+}
+ 

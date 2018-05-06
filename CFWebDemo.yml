@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  CFVPCWebDemo:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+
+  CFIGWWebDemo:
+    Type: 'AWS::EC2::InternetGateway'
+    DependsOn: CFVPCWebDemo
+
+  CFVPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    DependsOn: CFIGWWebDemo
+    Properties:
+      VpcId: !Ref CFVPCWebDemo
+      InternetGatewayId: !Ref CFIGWWebDemo
+
+  CFsubWebDemousw2a:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: us-west-2a
+      VpcId: !Ref CFVPCWebDemo
+      CidrBlock: 10.20.0.0/20
+      MapPublicIpOnLaunch: true
+
+  CFsubWebDemousw2b:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: us-west-2b
+      VpcId: !Ref CFVPCWebDemo
+      CidrBlock: 10.20.16.0/20
+      MapPublicIpOnLaunch: true
+
+  CFsubWebDemousw2c:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: us-west-2c
+      VpcId: !Ref CFVPCWebDemo
+      CidrBlock: 10.20.32.0/20
+      MapPublicIpOnLaunch: true
+
+  CFRTWebDemo:
+    Type: 'AWS::EC2::RouteTable'
+    DependsOn:
+      - CFsubWebDemousw2a
+      - CFsubWebDemousw2b
+      - CFsubWebDemousw2c
+      - CFVPCGatewayAttachment
+    Properties:
+      VpcId: !Ref CFVPCWebDemo
+
+  CFDefaultRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn:
+      - CFIGWWebDemo
+      - CFRTWebDemo
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CFIGWWebDemo
+      RouteTableId: !Ref CFRTWebDemo
+
+  CFRTAsubWebDemousw2a:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    DependsOn: CFRTWebDemo
+    Properties:
+      RouteTableId: !Ref CFRTWebDemo
+      SubnetId: !Ref CFsubWebDemousw2a
+
+  CFRTAsubWebDemousw2b:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    DependsOn: CFRTWebDemo
+    Properties:
+      RouteTableId: !Ref CFRTWebDemo
+      SubnetId: !Ref CFsubWebDemousw2b
+
+  CFRTAsubWebDemousw2c:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    DependsOn: CFRTWebDemo
+    Properties:
+      RouteTableId: !Ref CFRTWebDemo
+      SubnetId: !Ref CFsubWebDemousw2c
+
+  CFSGALBWebDemo:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: CFSGALBWebDemo
+      GroupDescription: CFbased SG for ALB WebDemo
+      VpcId: !Ref CFVPCWebDemo
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  CFSGTGTHostWebDemo:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: CFSGTGTHostWebDemo
+      GroupDescription: CFbased SG For the ALB WebDemo Hosts
+      VpcId: !Ref CFVPCWebDemo
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 10.20.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  CFALBWebDemo:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - !Ref CFsubWebDemousw2a
+        - !Ref CFsubWebDemousw2b
+        - !Ref CFsubWebDemousw2c
+      SecurityGroups:
+        - !Ref CFSGALBWebDemo
+      Tags:
+        - Key: Group
+          Value: WebDemo
+
+  CFALBTGTWebDemo:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    DependsOn: CFALBWebDemo
+    Properties:
+      Name: CFALBTGTWebDemo
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '20'
+      VpcId: !Ref CFVPCWebDemo
+
+  CFALBWebDemoListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    DependsOn: CFALBWebDemo
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref CFALBTGTWebDemo
+      LoadBalancerArn: !Ref CFALBWebDemo
+      Port: '80'
+      Protocol: HTTP
+
+  CFLCWebDemo:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    DependsOn: CFIGWWebDemo
+    Properties:
+      ImageId: ami-6b8cef13
+      InstanceType: t2.micro
+      KeyName: CFBKWebDemo
+      SecurityGroups:
+        - !Ref CFSGTGTHostWebDemo
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash -e
+            - >-
+              yum update -y; yum install -y nginx; chkconfig --level 3 nginx
+              on;  function awsmeta {  echo "<h3> $1 </h3> <h4> `curl -s
+              http://169.254.169.254/latest/meta-data/$2` </h3> <br>"; }
+
+              function buildpage ()  {  echo '<div style="text-align:center">';
+              awsmeta Instance_ID instance-id; awsmeta Instance_Type
+              instance-type; awsmeta Private_IP local-ipv4; awsmeta
+              Availability_Zone placement/availability-zone; awsmeta AMI_ID
+              ami-id; }; buildpage >
+              /usr/share/nginx/html/index.html;/etc/init.d/nginx start
+
+  CFASGWebDemo:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    DependsOn:
+      - CFALBWebDemo
+      - CFALBTGTWebDemo
+      - CFALBWebDemoListener
+    Properties:
+      AutoScalingGroupName: CFASGWebDemo
+      Tags:
+        - Key: Group
+          Value: WebDemo
+          PropagateAtLaunch: 'true'
+      AvailabilityZones: !GetAZs ''
+      VPCZoneIdentifier:
+        - !Ref CFsubWebDemousw2a
+        - !Ref CFsubWebDemousw2b
+        - !Ref CFsubWebDemousw2c
+      LaunchConfigurationName: !Ref CFLCWebDemo
+      MinSize: '3'
+      MaxSize: '3'
+      HealthCheckGracePeriod: 900
+      HealthCheckType: ELB
+      TargetGroupARNs:
+        - !Ref CFALBTGTWebDemo
+
+Outputs:
+  ALBDNS:
+    Description: ALB DNS entry
+    Value: !GetAtt CFALBWebDemo.DNSName
+
